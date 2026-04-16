@@ -1,0 +1,12 @@
+Noisy PSNR: 14.7102 dB
+Denoised PSNR: 23.7092 dB
+Wavelet: db4
+Sigma: 50.0
+Patch size: 8
+Atoms total: 256
+Max sparsity: 6
+Train iterations: 5
+Lambda: 1.0
+Noise gain C: 1.15
+Stride: 1
+Literal paper constraint: False
