@@ -319,7 +319,7 @@ export default function KSVDTeachingDashboard() {
           </div>
 
           <div className="space-y-6">
-            <div className="grid lg:grid-cols-3 gap-6">
+            <div className="grid lg:grid-cols-4 gap-6">
               <ImagePanel
                 title="Input / Clean Preview"
                 src={result?.clean_image || inputPreview}
@@ -329,6 +329,11 @@ export default function KSVDTeachingDashboard() {
                 title="Noisy Image"
                 src={result?.noisy_image}
                 caption={`Gaussian noise is added using sigma = ${sigma}. As sigma increases, random intensity fluctuation becomes more visible.`}
+              />
+              <ImagePanel
+                title="K-SVD Only Denoised"
+                src={result?.ksvd_only_image}
+                caption="This is the plain K-SVD result without wavelet decomposition. It uses direct patch denoising with a DCT-initialized dictionary."
               />
               <ImagePanel
                 title="Denoised Image"
@@ -347,6 +352,7 @@ export default function KSVDTeachingDashboard() {
               <div className="flex flex-wrap gap-3 mb-4">
                 <StatPill label="Sigma" value={sigma} />
                 <StatPill label="Noisy PSNR" value={result?.noisy_psnr ? `${Number(result.noisy_psnr).toFixed(2)} dB` : "—"} />
+                <StatPill label="K-SVD Only PSNR" value={result?.ksvd_only_psnr ? `${Number(result.ksvd_only_psnr).toFixed(2)} dB` : "—"} />
                 <StatPill label="Denoised PSNR" value={result?.denoised_psnr ? `${Number(result.denoised_psnr).toFixed(2)} dB` : "—"} />
                 <StatPill label="Status" value={result ? "Completed" : loading ? "Running" : "Waiting"} />
               </div>
@@ -387,6 +393,14 @@ export default function KSVDTeachingDashboard() {
                   title="D Dictionary"
                   src={result?.dictionaries?.D}
                   explanation="Diagonal-detail atoms. These are useful when discussing diagonal transitions, corners, and textured components."
+                />
+              </div>
+              <div className="mt-6">
+                <h3 className="text-lg font-semibold text-slate-900 mb-4">K-SVD Only Dictionary</h3>
+                <DictionaryPanel
+                  title="K-SVD Only Dictionary"
+                  src={result?.ksvd_only_dictionary}
+                  explanation="This is the dictionary learned directly from image patches without wavelet decomposition. It shows the atoms used by plain K-SVD."
                 />
               </div>
             </div>

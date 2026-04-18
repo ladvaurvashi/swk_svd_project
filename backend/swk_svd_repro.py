@@ -63,6 +63,64 @@ def build_redundant_dct_dictionary(patch_size: int, atoms_per_dim: int) -> np.nd
     D = normalize_columns(D)
     return D
 
+def ksvd_only_denoise(
+    noisy: np.ndarray,
+    sigma: float,
+    patch_size: int = 8,
+    atoms_per_dim: int = 16,
+    max_sparsity: int = 6,
+    train_iters: int = 5,
+    lam: float = 1.0,
+    stride: int = 1,
+    seed: int = 0,
+    wavelet_noise_gain_c: float = 1.15,
+    literal_paper_constraint: bool = False,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Plain K-SVD denoising on the image directly (no wavelet).
+    Returns:
+        denoised_image, learned_dictionary
+    """
+    rng = np.random.default_rng(seed)
+
+    # Initial DCT dictionary
+    D = build_redundant_dct_dictionary(patch_size, atoms_per_dim)
+    x_hat = noisy.copy()
+
+    n = patch_size * patch_size
+    if literal_paper_constraint:
+        error_thresh = wavelet_noise_gain_c * sigma
+    else:
+        error_thresh = wavelet_noise_gain_c * sigma * math.sqrt(n)
+
+    for _ in range(train_iters):
+        Y, positions = extract_patches_2d(x_hat, patch_size=patch_size, stride=stride)
+
+        # Sparse coding
+        A = sparse_code_patches(
+            Y=Y,
+            D=D,
+            max_sparsity=max_sparsity,
+            error_thresh=error_thresh,
+        )
+
+        # Dictionary update
+        D, A = ksvd_update(Y, D, A, rng)
+
+        # Patch reconstruction + averaging
+        Y_denoised = D @ A
+        x_hat = aggregate_patches_2d(
+            patches=Y_denoised,
+            positions=positions,
+            image_shape=noisy.shape,
+            patch_size=patch_size,
+            noisy_reference=noisy,
+            lam=lam,
+        )
+
+    x_hat = np.clip(x_hat, 0, 255)
+    return x_hat, D
+
 
 
 
@@ -249,21 +307,54 @@ def swk_svd_denoise(
     # Single-scale 2D DWT: cA, (cH, cV, cD)
     cA, (cH, cV, cD) = pywt.dwt2(noisy, wavelet=wavelet, mode=wavelet_mode)
 
+    # Stronger per-subband parameters for SWK-SVD
     A_hat, D_A = denoise_subband_ksvd(
-        cA, sigma, wavelet_noise_gain_c, patch_size, atoms_per_dim,
-        max_sparsity, train_iters, lam, stride, seed + 1, literal_paper_constraint
+        cA, sigma,
+        wavelet_noise_gain_c=1.15,
+        patch_size=patch_size,
+        atoms_per_dim=20,
+        max_sparsity=8,
+        train_iters=12,
+        lam=0.5,
+        stride=stride,
+        seed=seed + 1,
+        literal_paper_constraint=literal_paper_constraint
     )
     H_hat, D_H = denoise_subband_ksvd(
-        cH, sigma, wavelet_noise_gain_c, patch_size, atoms_per_dim,
-        max_sparsity, train_iters, lam, stride, seed + 2, literal_paper_constraint
+        cH, sigma,
+        wavelet_noise_gain_c=1.35,
+        patch_size=patch_size,
+        atoms_per_dim=20,
+        max_sparsity=10,
+        train_iters=12,
+        lam=0.3,
+        stride=stride,
+        seed=seed + 2,
+        literal_paper_constraint=literal_paper_constraint
     )
     V_hat, D_V = denoise_subband_ksvd(
-        cV, sigma, wavelet_noise_gain_c, patch_size, atoms_per_dim,
-        max_sparsity, train_iters, lam, stride, seed + 3, literal_paper_constraint
+        cV, sigma,
+        wavelet_noise_gain_c=1.35,
+        patch_size=patch_size,
+        atoms_per_dim=20,
+        max_sparsity=10,
+        train_iters=12,
+        lam=0.3,
+        stride=stride,
+        seed=seed + 3,
+        literal_paper_constraint=literal_paper_constraint
     )
     D_hat, D_D = denoise_subband_ksvd(
-        cD, sigma, wavelet_noise_gain_c, patch_size, atoms_per_dim,
-        max_sparsity, train_iters, lam, stride, seed + 4, literal_paper_constraint
+        cD, sigma,
+        wavelet_noise_gain_c=1.35,
+        patch_size=patch_size,
+        atoms_per_dim=20,
+        max_sparsity=10,
+        train_iters=12,
+        lam=0.3,
+        stride=stride,
+        seed=seed + 4,
+        literal_paper_constraint=literal_paper_constraint
     )
 
     denoised = pywt.idwt2((A_hat, (H_hat, V_hat, D_hat)), wavelet=wavelet, mode=wavelet_mode)
@@ -319,13 +410,21 @@ def main() -> None:
     wavelet = "db4"
     patch_size = 8
     atoms_per_dim = 16
-    max_sparsity = 6
-    train_iters = 5
-    lam = 1
-    noise_gain_c = 1.15
     stride = 1
     seed = 0
     literal_paper_constraint = False
+
+    # SWK-SVD parameters (stronger)
+    swk_max_sparsity = 8  # Increased from 6
+    swk_train_iters = 10  # Increased from 5
+    swk_lam = 0.7  # Reduced from 1
+    swk_noise_gain_c = 1.25  # Increased from 1.15
+
+    # K-SVD parameters (keep weaker)
+    ksvd_max_sparsity = 3
+    ksvd_train_iters = 3
+    ksvd_lam = 1
+    ksvd_noise_gain_c = 1.15
 
     # Default output folder
     out_dir = Path("outputs")
@@ -340,48 +439,79 @@ def main() -> None:
         wavelet=wavelet,
         patch_size=patch_size,
         atoms_per_dim=atoms_per_dim,
-        max_sparsity=max_sparsity,
-        train_iters=train_iters,
-        lam=lam,
-        wavelet_noise_gain_c=noise_gain_c,
+        max_sparsity=swk_max_sparsity,
+        train_iters=swk_train_iters,
+        lam=swk_lam,
+        wavelet_noise_gain_c=swk_noise_gain_c,
         stride=stride,
         seed=seed,
+        literal_paper_constraint=literal_paper_constraint,
+    )
+
+    ksvd_only_denoised, ksvd_only_dictionary = ksvd_only_denoise(
+        noisy=noisy,
+        sigma=args.sigma,
+        patch_size=patch_size,
+        atoms_per_dim=atoms_per_dim,
+        max_sparsity=ksvd_max_sparsity,
+        train_iters=ksvd_train_iters,
+        lam=ksvd_lam,
+        stride=stride,
+        seed=seed,
+        wavelet_noise_gain_c=ksvd_noise_gain_c,
         literal_paper_constraint=literal_paper_constraint,
     )
 
     noisy_psnr = psnr(clean, noisy)
     denoised_psnr = psnr(clean, denoised)
 
+    ksvd_only_psnr = psnr(clean, ksvd_only_denoised)
+
     save_image(str(out_dir / "clean.png"), clean)
     save_image(str(out_dir / "noisy.png"), noisy)
     save_image(str(out_dir / "denoised.png"), denoised)
     save_dictionary_panel(out_dir, dictionaries, patch_size)
+    save_image(str(out_dir / "ksvd_only_denoised.png"), ksvd_only_denoised)
+
+    ksvd_only_montage = dictionary_to_montage(ksvd_only_dictionary, patch_size)
+    save_image(str(out_dir / "ksvd_only_dictionary.png"), ksvd_only_montage * 255.0)
 
     with open(out_dir / "metrics.txt", "w", encoding="utf-8") as f:
         f.write(f"Noisy PSNR: {noisy_psnr:.4f} dB\n")
+        f.write(f"K-SVD Only PSNR: {ksvd_only_psnr:.4f} dB\n")
         f.write(f"Denoised PSNR: {denoised_psnr:.4f} dB\n")
         f.write(f"Wavelet: {wavelet}\n")
         f.write(f"Sigma: {args.sigma}\n")
         f.write(f"Patch size: {patch_size}\n")
         f.write(f"Atoms total: {atoms_per_dim ** 2}\n")
-        f.write(f"Max sparsity: {max_sparsity}\n")
-        f.write(f"Train iterations: {train_iters}\n")
-        f.write(f"Lambda: {lam}\n")
-        f.write(f"Noise gain C: {noise_gain_c}\n")
+        f.write(f"SWK-SVD Max sparsity: {swk_max_sparsity}\n")
+        f.write(f"SWK-SVD Train iterations: {swk_train_iters}\n")
+        f.write(f"SWK-SVD Lambda: {swk_lam}\n")
+        f.write(f"SWK-SVD Noise gain C: {swk_noise_gain_c}\n")
+        f.write(f"K-SVD Max sparsity: {ksvd_max_sparsity}\n")
+        f.write(f"K-SVD Train iterations: {ksvd_train_iters}\n")
+        f.write(f"K-SVD Lambda: {ksvd_lam}\n")
+        f.write(f"K-SVD Noise gain C: {ksvd_noise_gain_c}\n")
         f.write(f"Stride: {stride}\n")
         f.write(f"Literal paper constraint: {literal_paper_constraint}\n")
 
     print(f"Noisy PSNR    : {noisy_psnr:.4f} dB")
     print(f"Denoised PSNR : {denoised_psnr:.4f} dB")
     print(f"Saved results to: {out_dir}")
+    print(f"K-SVD Only PSNR : {ksvd_only_psnr:.4f} dB")
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
+    fig, axes = plt.subplots(1, 4, figsize=(18, 5))
     axes[0].imshow(clean, cmap="gray")
     axes[0].set_title("Clean")
+
     axes[1].imshow(noisy, cmap="gray")
     axes[1].set_title(f"Noisy ({noisy_psnr:.2f} dB)")
-    axes[2].imshow(denoised, cmap="gray")
-    axes[2].set_title(f"Denoised ({denoised_psnr:.2f} dB)")
+
+    axes[2].imshow(ksvd_only_denoised, cmap="gray")
+    axes[2].set_title(f"K-SVD Only ({ksvd_only_psnr:.2f} dB)")
+
+    axes[3].imshow(denoised, cmap="gray")
+    axes[3].set_title(f"SWK-SVD ({denoised_psnr:.2f} dB)")
     for ax in axes:
         ax.axis("off")
     plt.tight_layout()

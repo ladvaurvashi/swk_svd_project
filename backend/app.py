@@ -56,6 +56,8 @@ def denoise():
             "clean.png",
             "noisy.png",
             "denoised.png",
+            "ksvd_only_denoised.png",
+            "ksvd_only_dictionary.png",
             "dictionary_A.png",
             "dictionary_H.png",
             "dictionary_V.png",
@@ -78,19 +80,31 @@ def denoise():
 
         noisy_psnr = None
         denoised_psnr = None
+        ksvd_only_psnr = None
 
         for line in metrics_text.splitlines():
-            if line.startswith("Noisy PSNR:"):
-                noisy_psnr = float(line.split(":")[1].strip().split()[0])
-            if line.startswith("Denoised PSNR:"):
-                denoised_psnr = float(line.split(":")[1].strip().split()[0])
+            if ":" in line:
+                parts = line.split(":", 1)
+                key = parts[0].strip()
+                value_part = parts[1].strip()
+                if "dB" in value_part:
+                    value = float(value_part.split()[0])
+                    if key == "Noisy PSNR":
+                        noisy_psnr = value
+                    elif key == "Denoised PSNR":
+                        denoised_psnr = value
+                    elif key == "K-SVD Only PSNR":
+                        ksvd_only_psnr = value
 
         return jsonify({
             "noisy_psnr": noisy_psnr,
             "denoised_psnr": denoised_psnr,
+            "ksvd_only_psnr": ksvd_only_psnr,
             "clean_image": url("clean.png"),
             "noisy_image": url("noisy.png"),
             "denoised_image": url("denoised.png"),
+            "ksvd_only_image": url("ksvd_only_denoised.png"),
+            "ksvd_only_dictionary": url("ksvd_only_dictionary.png"),
             "dictionaries": {
                 "A": url("dictionary_A.png"),
                 "H": url("dictionary_H.png"),
